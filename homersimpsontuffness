@@ -1,0 +1,292 @@
+--// SERVICES
+local Players = game:GetService("Players")
+local Lighting = game:GetService("Lighting")
+local UIS = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+
+local LocalPlayer = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+
+--// GUI
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "AimbotBattlegroundsUI"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.Parent = PlayerGui
+
+local Button = Instance.new("TextButton")
+
+-- Smaller size
+Button.Size = UDim2.new(0, 180, 0, 55)
+
+-- Top-left default position
+Button.Position = UDim2.new(0, 20, 0, 20)
+
+Button.BackgroundColor3 = Color3.fromRGB(255, 0, 0)
+
+Button.Text = "DO NOT PRESS"
+Button.TextColor3 = Color3.fromRGB(255, 255, 255)
+
+Button.Font = Enum.Font.SourceSansBold
+Button.TextScaled = true
+
+-- Rounded corners
+local corner = Instance.new("UICorner")
+corner.CornerRadius = UDim.new(0, 10)
+corner.Parent = Button
+
+Button.Parent = ScreenGui
+
+--// DRAGGING
+local dragging = false
+local dragInput
+local dragStart
+local startPos
+
+Button.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 then
+		dragging = true
+		dragStart = input.Position
+		startPos = Button.Position
+
+		input.Changed:Connect(function()
+			if input.UserInputState == Enum.UserInputState.End then
+				dragging = false
+			end
+		end)
+	end
+end)
+
+Button.InputChanged:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseMovement then
+		dragInput = input
+	end
+end)
+
+UIS.InputChanged:Connect(function(input)
+	if input == dragInput and dragging then
+		local delta = input.Position - dragStart
+
+		Button.Position = UDim2.new(
+			startPos.X.Scale,
+			startPos.X.Offset + delta.X,
+			startPos.Y.Scale,
+			startPos.Y.Offset + delta.Y
+		)
+	end
+end)
+
+--// VARIABLES
+local Enabled = false
+
+local ESPFolder = Instance.new("Folder")
+ESPFolder.Name = "ESP_Objects"
+ESPFolder.Parent = workspace
+
+local aiming = false
+local fovRadius = 100
+
+--// FOV CIRCLE
+local fovCircle = Drawing.new("Circle")
+fovCircle.Position = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+fovCircle.Radius = fovRadius
+fovCircle.Color = Color3.fromRGB(255, 255, 0)
+fovCircle.Thickness = 1
+fovCircle.Transparency = 0.6
+fovCircle.Visible = false
+fovCircle.Filled = false
+
+--// FULL BRIGHT
+local function EnableFullBright()
+	Lighting.Brightness = 5
+	Lighting.ClockTime = 14
+	Lighting.FogEnd = 100000
+	Lighting.GlobalShadows = false
+	Lighting.OutdoorAmbient = Color3.fromRGB(255, 255, 255)
+
+	Lighting.Ambient = Color3.fromRGB(255, 255, 255)
+	Lighting.ColorShift_Bottom = Color3.fromRGB(255, 255, 255)
+	Lighting.ColorShift_Top = Color3.fromRGB(255, 255, 255)
+end
+
+--// NAME TAG
+local function CreateNameTag(character, player)
+	local head = character:WaitForChild("Head")
+
+	local billboard = Instance.new("BillboardGui")
+	billboard.Name = "ESP_NameTag"
+	billboard.Adornee = head
+	billboard.Size = UDim2.new(0, 200, 0, 50)
+	billboard.StudsOffset = Vector3.new(0, 2.5, 0)
+	billboard.AlwaysOnTop = true
+
+	local textLabel = Instance.new("TextLabel")
+	textLabel.Size = UDim2.new(1, 0, 1, 0)
+	textLabel.BackgroundTransparency = 1
+
+	-- Real username
+	textLabel.Text = player.Name
+
+	-- Colors
+	textLabel.TextColor3 = Color3.fromRGB(120, 190, 255)
+	textLabel.TextStrokeTransparency = 0
+	textLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 40)
+
+	-- Font
+	textLabel.Font = Enum.Font.SourceSansBold
+	textLabel.TextScaled = false
+	textLabel.TextSize = 15
+
+	textLabel.Parent = billboard
+	billboard.Parent = character
+end
+
+--// ESP
+local function CreateESP(player)
+	if player == LocalPlayer then
+		return
+	end
+
+	local function SetupCharacter(character)
+		local old = ESPFolder:FindFirstChild(player.Name)
+
+		if old then
+			old:Destroy()
+		end
+
+		local highlight = Instance.new("Highlight")
+		highlight.Name = player.Name
+		highlight.Adornee = character
+
+		highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+
+		-- Dark blue fill
+		highlight.FillColor = Color3.fromRGB(0, 40, 120)
+
+		-- Light blue outline
+		highlight.OutlineColor = Color3.fromRGB(120, 190, 255)
+
+		highlight.FillTransparency = 0.35
+		highlight.OutlineTransparency = 0
+
+		highlight.Parent = ESPFolder
+
+		CreateNameTag(character, player)
+	end
+
+	if player.Character then
+		SetupCharacter(player.Character)
+	end
+
+	player.CharacterAdded:Connect(SetupCharacter)
+end
+
+--// AIMBOT TARGETING
+local function getClosest()
+	local closest = nil
+	local shortest = math.huge
+
+	for _, v in pairs(Players:GetPlayers()) do
+		if v ~= LocalPlayer
+			and v.Character
+			and v.Character:FindFirstChild("Humanoid")
+			and v.Character.Humanoid.Health > 0 then
+
+			local head = v.Character:FindFirstChild("Head")
+
+			if head then
+				local screenPos, onScreen = Camera:WorldToViewportPoint(head.Position)
+
+				if onScreen then
+					local distFromCenter =
+						(Vector2.new(screenPos.X, screenPos.Y) - fovCircle.Position).Magnitude
+
+					local myHead = LocalPlayer.Character
+						and LocalPlayer.Character:FindFirstChild("Head")
+
+					local dist3D = myHead
+						and (head.Position - myHead.Position).Magnitude
+						or math.huge
+
+					if distFromCenter <= fovRadius and dist3D < shortest then
+						shortest = dist3D
+						closest = head
+					end
+				end
+			end
+		end
+	end
+
+	return closest
+end
+
+--// ENABLE EVERYTHING
+local function EnableEverything()
+	if Enabled then
+		return
+	end
+
+	Enabled = true
+
+	EnableFullBright()
+
+	fovCircle.Visible = true
+
+	for _, player in ipairs(Players:GetPlayers()) do
+		CreateESP(player)
+	end
+
+	Players.PlayerAdded:Connect(CreateESP)
+
+	Players.PlayerRemoving:Connect(function(player)
+		local esp = ESPFolder:FindFirstChild(player.Name)
+
+		if esp then
+			esp:Destroy()
+		end
+	end)
+
+	Button.Text = "ENABLED"
+	Button.BackgroundColor3 = Color3.fromRGB(120, 0, 0)
+end
+
+--// BUTTON CLICK
+Button.MouseButton1Click:Connect(function()
+	EnableEverything()
+end)
+
+--// AIMBOT KEYBINDS
+UIS.InputBegan:Connect(function(input, gpe)
+	if gpe then
+		return
+	end
+
+	if input.KeyCode == Enum.KeyCode.T then
+		aiming = true
+	end
+end)
+
+UIS.InputEnded:Connect(function(input)
+	if input.KeyCode == Enum.KeyCode.T then
+		aiming = false
+	end
+end)
+
+--// MAIN LOOP
+RunService.RenderStepped:Connect(function()
+	fovCircle.Position = Vector2.new(
+		Camera.ViewportSize.X / 2,
+		Camera.ViewportSize.Y / 2
+	)
+
+	if aiming and Enabled then
+		local target = getClosest()
+
+		if target then
+			Camera.CFrame = CFrame.new(
+				Camera.CFrame.Position,
+				target.Position
+			)
+		end
+	end
+end)
